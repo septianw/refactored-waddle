@@ -27,6 +27,7 @@ package main
 import (
 	"log"
 	"net"
+	"os"
 )
 
 func echoServer(c net.Conn) {
@@ -43,22 +44,24 @@ func echoServer(c net.Conn) {
 		log.Println("Data received by server", string(data)) // receive request here
 		err, res := DigestReq(data)
 		if err != nil {
-			c.Close()
+			log.Println("digest error:", err)
+			// c.Close()
+		} else {
+			// Make sure response are terminated by \n
+			// return only single line unformatted
+			_, err = c.Write(res) // send response here
+
+			if err != nil {
+				log.Fatal("write error", err)
+			}
 		}
 
-		// Make sure response are terminated by \n
-		// return only single line unformatted
-		_, err = c.Write(res) // send response here
-
-		if err != nil {
-			log.Fatal("write error", err)
-		}
 	}
 
 }
 
 func main() {
-	l, err := net.Listen("unix", "/var/run/dev-test/sock")
+	l, err := net.Listen("unix", os.Args[1])
 	if err != nil {
 		log.Fatal("net listen error", err)
 	}
