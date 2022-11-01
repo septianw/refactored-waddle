@@ -1,5 +1,5 @@
 /*
-
+	# Problem 1
     [x] Each message is a JSON object contained in a single line.
     [x] Every message is terminated with the new line character \n (ASCII: 10).
     [x] Every message from a client is called a request.
@@ -20,40 +20,68 @@ For this problem, implement only the request type: echo. For this message type, 
 
     For example, given the request: {"id": 42, "method": "echo", "params": {"message": "Hello"}}. The correct response is: {"id": 42, "result": {"message": "Hello"}}.
 
+	# Problem 2
+	[ ] stream
+	[ ] incomplete
+	[ ] duplicate
 */
 
 package main
 
 import (
+	"bytes"
 	"log"
 	"net"
 	"os"
 )
 
+var buffOut = make(chan []byte, 10)
+var buffIn = make(chan []byte, 10)
+var buffer, lastBuff []byte
+
+func collectingBuff() {
+	for {
+		select {
+		case in := <-buffIn:
+			if !bytes.Equal(in, lastBuff) {
+				buffer = append(buffer, in...)
+				lastBuff = in
+			}
+			// sanitize, crop, validate
+			buffer = DigestReq(buffer)
+		default:
+		}
+	}
+}
+
 func echoServer(c net.Conn) {
 	for {
-		buf := make([]byte, 512)
-		nr, err := c.Read(buf)
-		if err != nil {
-			return
-		}
-
-		data := buf[0:nr]
-
-		// if receive invalid request, disconnect client immediately.
-		log.Println("Data received by server", string(data)) // receive request here
-		err, res := DigestReq(data)
-		if err != nil {
-			log.Println("digest error:", err)
-			// c.Close()
-		} else {
-			// Make sure response are terminated by \n
-			// return only single line unformatted
-			_, err = c.Write(res) // send response here
-
+		select {
+		case out := <-buffOut:
+			err, res := ValidateOut(out)
 			if err != nil {
-				log.Fatal("write error", err)
+				log.Println("validate error:", err)
+				// c.Close()
+			} else {
+				// Make sure response are terminated by \n
+				// return only single line unformatted
+				_, err = c.Write(res) // send response here
+
+				if err != nil {
+					log.Fatal("write error", err)
+				}
 			}
+		default:
+			buf := make([]byte, 512)
+			nr, err := c.Read(buf)
+			if err != nil {
+				return
+			}
+
+			data := buf[0:nr]
+
+			log.Println("Data received by server", string(data)) // receive request here
+			buffIn <- data
 		}
 
 	}
@@ -65,6 +93,8 @@ func main() {
 	if err != nil {
 		log.Fatal("net listen error", err)
 	}
+
+	go collectingBuff()
 
 	for {
 		fd, err := l.Accept()

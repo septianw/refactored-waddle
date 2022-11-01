@@ -29,12 +29,12 @@ func TestReq2Res(t *testing.T) {
 	}
 }
 
-func TestDigestReq(t *testing.T) {
+func TestValidateOut(t *testing.T) {
 	reqSuccess := []byte(`{"id": 42, "method": "echo", "params": {"message": "Hello"}}`)
 	reqFail1 := []byte(`{"id": 42, "method": "echo", "params": 34}`)
 	reqFail2 := []byte(`help`)
 
-	err, result := DigestReq(reqSuccess)
+	err, result := ValidateOut(reqSuccess)
 	if err != nil {
 		t.Fail()
 	}
@@ -49,7 +49,7 @@ func TestDigestReq(t *testing.T) {
 	t.Log(result)
 	t.Log(string(reqSuccess))
 
-	err, result = DigestReq(reqFail1)
+	err, result = ValidateOut(reqFail1)
 	if err == nil {
 		t.Fail()
 	}
@@ -57,11 +57,22 @@ func TestDigestReq(t *testing.T) {
 	t.Log(result)
 	t.Log(string(reqFail1))
 
-	err, result = DigestReq(reqFail2)
+	err, result = ValidateOut(reqFail2)
 	if err == nil {
 		t.Fail()
 	}
 	t.Log(err)
 	t.Log(result)
 	t.Log(string(reqFail2))
+}
+
+func TestDigestReq(t *testing.T) {
+	input := []byte(`{"id": 0, "method": "echo",
+{"id": 0, "method": "echo",
+"params": {"message": "Hello"
+}}`)
+	o := DigestReq(input)
+
+	t.Log(o)
+	// t.Log([]byte("\n"))
 }

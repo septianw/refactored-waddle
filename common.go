@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "bytes"
 	"encoding/json"
 	"log"
 )
@@ -18,8 +19,9 @@ func Req2Res(req Request) Response {
 // DigestReq are digesting any message coming in,
 // if input valid error not nil and response not empty
 // [x] validate input by marshalling
-// [ ] convert Response to json
-func DigestReq(in []byte) (error, []byte) {
+// [x] convert Response to json
+// [ ] partial message
+func ValidateOut(in []byte) (error, []byte) {
 	var res Response
 	var req Request
 	var err error
@@ -40,4 +42,19 @@ func DigestReq(in []byte) (error, []byte) {
 	}
 
 	return err, out
+}
+
+// ScanMsg this function will scan buffer for an object,
+// this will block loop of collectingBuff
+func DigestReq(buff []byte) []byte {
+	// msgs := bytes.Split(buffer, []byte("\n"))
+	var bo, s []byte // buffer out and separator.
+	var err error
+	s = []byte("\n")
+
+	b := bytes.NewBuffer(buff)
+
+	bo = buff
+
+	return bo
 }
