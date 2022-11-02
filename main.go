@@ -33,59 +33,127 @@ import (
 	"log"
 	"net"
 	"os"
+	"sync"
+	"time"
 )
 
-var buffOut = make(chan []byte, 10)
-var buffIn = make(chan []byte, 10)
-var buffer, lastBuff []byte
+var buffOut = make(chan []byte, 100)
+var buffIn = make(chan []byte, 100)
+var resOut = make(chan net.Conn, 100)
+var resWaitCount int = 0
+var rwcmut sync.Mutex
+var crumb []byte
+var timer *time.Timer
 
 func collectingBuff() {
+	var buffer, lastBuff []byte
+	log.Println("collectingBuff goroutine start.")
 	for {
 		select {
 		case in := <-buffIn:
+			log.Println("collectingBuff: buffIn received.")
+
+			log.Println("buffIn string:", string(in))
+			// log.Println("buffIn bytes:", in)
+
 			if !bytes.Equal(in, lastBuff) {
+				log.Println("collectingBuff: appending to buffer.")
 				buffer = append(buffer, in...)
 				lastBuff = in
+			} else {
+				log.Println("collectingBuff: Duplicate message found, ignore.")
 			}
+
+			// log.Println("buffIn content predigest:", string(buffer))
+			// log.Println("buffIn content predigest:", buffer)
+
 			// sanitize, crop, validate
 			buffer = DigestReq(buffer)
+
+			// log.Println("buffIn content postdigest:", string(buffer))
+			// log.Println("buffIn content postdigest:", buffer)
 		default:
+			continue
 		}
 	}
 }
 
-func echoServer(c net.Conn) {
+func collectingResult() {
+	log.Println("collectingResult goroutine start.")
 	for {
 		select {
 		case out := <-buffOut:
-			err, res := ValidateOut(out)
-			if err != nil {
-				log.Println("validate error:", err)
-				// c.Close()
-			} else {
-				// Make sure response are terminated by \n
-				// return only single line unformatted
-				_, err = c.Write(res) // send response here
+			log.Println("collectingResult: buffOut received.")
 
-				if err != nil {
-					log.Fatal("write error", err)
-				}
+			// log.Println("buffOut string:", string(out))
+			// log.Println("buffOut bytes:", out)
+
+			// Make sure response are terminated by \n
+			// return only single line unformatted
+			log.Println("===>", string(out))
+			c := <-resOut
+			_, err := c.Write(out) // send response
+			if err != nil {
+				log.Fatal("collectingResult: write error", err)
 			}
 		default:
-			buf := make([]byte, 512)
-			nr, err := c.Read(buf)
-			if err != nil {
-				return
-			}
-
-			data := buf[0:nr]
-
-			log.Println("Data received by server", string(data)) // receive request here
-			buffIn <- data
+			continue
 		}
 
 	}
+}
 
+func echoServer(c net.Conn) {
+	log.Println("echoServer goroutine start.")
+	for {
+		// log.Println("echoServer: default select")
+		buf := make([]byte, 512)
+		nr, err := c.Read(buf)
+		if err != nil {
+			return
+		}
+
+		data := buf[0:nr]
+
+		log.Println("<===", string(data)) // receive request here
+		err, res := ValidateOut(data)
+		if err != nil {
+			log.Println("echoServer: invalid json, buffering.")
+
+			// count request waiting
+			rwcmut.Lock()
+			resWaitCount++
+			rwcmut.Unlock()
+			log.Println("echoServer: resWaitCount", resWaitCount)
+
+			buffIn <- data
+			resOut <- c
+
+			// _, err = c.Write(EmptyResponse())
+			// if err != nil {
+			// 	log.Fatal("write error", err)
+			// }
+			// c.Close()
+		} else {
+			log.Println("===>", string(res))
+			_, err = c.Write(res) // send response here
+
+			if err != nil {
+				log.Fatal("write error", err)
+			}
+		}
+	}
+
+}
+
+func timerf() {
+	for {
+		select {
+		case <-timer.C:
+			log.Println("Timeout.")
+			os.Exit(2)
+		}
+	}
 }
 
 func main() {
@@ -95,9 +163,13 @@ func main() {
 	}
 
 	go collectingBuff()
+	go collectingResult()
 
 	for {
 		fd, err := l.Accept()
+		timer = time.NewTimer(1 * time.Second)
+		go timerf()
+
 		if err != nil {
 			log.Fatal("net listen accept error", err)
 		}
