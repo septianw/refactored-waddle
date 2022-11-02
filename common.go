@@ -6,6 +6,21 @@ import (
 	"log"
 )
 
+// Ab Append buff
+// Ab(base,
+func Ab(base, in []byte) []byte {
+	out := make([]byte, 0, len(base)+len(in)) // len 0, cap sum of base and in
+	out = base
+	// for _, v := range base {
+	// 	out = append(out, v)
+	// }
+	for _, v := range in {
+		out = append(out, v)
+	}
+
+	return out
+}
+
 // Req2Res are converting from request to response
 func Req2Res(req Request) Response {
 	var res Response
@@ -23,7 +38,7 @@ func EmptyResponse() []byte {
 			Message: "",
 		},
 	})
-	out = append(out, byte(10))
+	out = Ab(out, []byte("\n"))
 	return out
 }
 
@@ -49,7 +64,7 @@ func ValidateOut(in []byte) (error, []byte) {
 
 	out, err = json.Marshal(res)
 	if err == nil {
-		out = append(out, 10)
+		out = Ab(out, []byte("\n"))
 	}
 
 	return err, out
@@ -66,7 +81,10 @@ func DigestReq(buff []byte) []byte {
 		for _, v := range bs {
 			err, v := ValidateOut(v)
 			if err != nil {
-				crumb = append(crumb, v...)
+				rwcmut.Lock()
+				crumb = Ab(crumb, v)
+				rwcmut.Unlock()
+				go CrumbProc()
 			}
 			if len(v) != 0 {
 				buffOut <- v
@@ -80,15 +98,21 @@ func DigestReq(buff []byte) []byte {
 
 // CrumbProc this function will scan buffer for an object,
 // this will block loop of collectingBuff
-func CrumbProc(buff []byte) []byte {
-	// msgs := bytes.Split(buffer, []byte("\n"))
+func CrumbProc() {
+	rwcmut.Lock()
+	buff := crumb
+	log.Println("CrumbProc crumb:", crumb)
+	rwcmut.Unlock()
+	if len(buff) == 0 {
+		return
+	}
 	var bo, s []byte // buffer out and separator.
 	// var err error
 	var bracketCount, bracketOidx, bracketCidx int
 	s = []byte("\n")
 
-	log.Println("DigestReq input:", string(buff))
-	log.Println("DigestReq input:", buff)
+	log.Println("CrumbProc input:", string(buff))
+	log.Println("CrumbProc input:", buff)
 
 	for i, v := range buff {
 		if v == byte(123) { // {
@@ -120,18 +144,22 @@ func CrumbProc(buff []byte) []byte {
 
 			err, bs := ValidateOut(bs)
 			if err != nil {
-				return buff
+				rwcmut.Lock()
+				crumb = bo
+				rwcmut.Unlock()
 			}
 
-			log.Println("DigestReq result:", string(bs))
+			log.Println("CrumbProc result:", string(bs))
 			if len(bs) != 0 {
 				buffOut <- bs
 			}
 
 			bo = buff[0:bracketOidx]
-			bo = append(bo, buff[bracketCidx:]...)
+			bo = Ab(bo, buff[bracketCidx:])
 		}
 	}
 
-	return bo
+	rwcmut.Lock()
+	crumb = bo
+	rwcmut.Unlock()
 }
