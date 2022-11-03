@@ -21,9 +21,9 @@ For this problem, implement only the request type: echo. For this message type, 
     For example, given the request: {"id": 42, "method": "echo", "params": {"message": "Hello"}}. The correct response is: {"id": 42, "result": {"message": "Hello"}}.
 
 	# Problem 2
-	[ ] stream
-	[ ] incomplete
-	[ ] duplicate
+	[x] stream
+	[x] incomplete
+	[x] duplicate
 */
 
 package main
@@ -59,33 +59,6 @@ func errLog(err error) {
 	}
 }
 
-func collectingResult(wg *sync.WaitGroup) {
-	log.Println("collectingResult goroutine start.")
-	for {
-		select {
-		case out := <-buffOut:
-			log.Println("collectingResult: buffOut received.")
-
-			// Make sure response are terminated by \n
-			// return only single line unformatted
-			log.Println("===>", string(out))
-			log.Println("===>", out)
-
-			c := <-resOut
-			_, err := c.Write(out) // send response
-			log.Println("request duration:", time.Now().Sub(ta))
-			if err != nil {
-				log.Fatal("collectingResult: write error", err)
-			}
-			timer.Stop()
-			// wg.Done()
-		default:
-			continue
-		}
-
-	}
-}
-
 func readLine(lb *bytes.Buffer, c net.Conn) {
 	// lb := bytes.NewBuffer(data.Bytes())
 
@@ -116,26 +89,16 @@ func readLine(lb *bytes.Buffer, c net.Conn) {
 			log.Println("echoServer: resWaitCount", resWaitCount)
 
 			buffmut.Lock()
-			nr, err := buffer.Write(d)
+			_, err := buffer.Write(d)
 			buffmut.Unlock()
 
 			errLog(err)
-			// log.Println("echoServer: buff bytes written:", nr)
-			// log.Println("echoServer: len buffer b", buffer.Len())
-			// log.Println("echoServer: written buffer", buffer.String())
-			// log.Println("echoServer: written buffer", buffer.Bytes())
-			// log.Println("echoServer: len buffer a", buffer.Len())
 
 			if bytes.Index(d, []byte("\n")) != -1 {
 				buffmut.Lock()
 				nb := bytes.NewBuffer(buffer.Bytes())
 				buffer.Reset()
 				buffmut.Unlock()
-
-				// log.Println("echoServer: len buffer b", buffer.Len())
-				// log.Println("echoServer: content buffer", buffer.String())
-				// log.Println("echoServer: content buffer", buffer.Bytes())
-				// log.Println("echoServer: len buffer a", buffer.Len())
 
 				err, r := Sanitize(nb.Bytes())
 				if err == nil {
@@ -156,14 +119,6 @@ func readLine(lb *bytes.Buffer, c net.Conn) {
 			}
 			continue
 
-			// buffIn <- data
-			// resOut <- c
-
-			// _, err = c.Write(EmptyResponse())
-			// if err != nil {
-			// 	log.Fatal("write error", err)
-			// }
-			// c.Close()
 		} else {
 			_, res := ValidateOut(d)
 			log.Println("===>", string(res))
@@ -186,7 +141,6 @@ func echoServer(c net.Conn) {
 	// var err error
 	log.Println("echoServer goroutine start.")
 	for {
-		// log.Println("echoServer: default select")
 		buf := make([]byte, 2048)
 		nr, err := c.Read(buf)
 		if err != nil {
@@ -194,19 +148,9 @@ func echoServer(c net.Conn) {
 		}
 
 		lb := bytes.NewBuffer(buf[0:nr])
-		// log.Println("echoServer: buff", data.String())
-		// log.Println("echoServer: buff", data.Bytes())
 
 		ta = time.Now()
-		// log.Println("<===", data.String()) // receive request here
-		// log.Println("<===", data.Bytes())  // receive request here
-		// if (len(data) == 1) && (data[0] == byte(10)) {
-		// 	log.Println("Only endline, ignore")
-		// 	continue
-		// }
-		// if (len(data.Bytes()) == 1) && (data.Bytes()[0] == byte(10)) {
-		// 	continue
-		// }
+
 		readLine(lb, c)
 	}
 
@@ -234,9 +178,6 @@ func main() {
 		log.Fatal("net listen error", err)
 	}
 
-	// go collectingBuff(&wg)
-	// go collectingResult(&wg)
-
 	for {
 		log.Println("accept in.")
 		fd, err := l.Accept()
@@ -248,9 +189,7 @@ func main() {
 			log.Fatal("net listen accept error", err)
 		}
 
-		// wg.Add(1)
 		go echoServer(fd)
-		// wg.Wait()
 	}
 
 }
