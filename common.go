@@ -3,9 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"io"
+	"errors"
+	"time"
+
+	// "io"
 	"log"
-	"sync"
+	// "sync"
 )
 
 // Ab Append buff
@@ -14,7 +17,9 @@ func Ab(base, in []byte) []byte {
 	out := make([]byte, len(base)+len(in)) // len 0, cap sum of base and in
 
 	log.Println("Ab outsize:", len(base)+len(in))
+	tb := time.Now()
 	cpid := copy(out, base)
+	log.Println("Ab: cost of copy(out, base)", time.Now().Sub(tb))
 	log.Println("Ab len copied from base to out:", cpid)
 
 	i := len(base)
@@ -39,8 +44,9 @@ func Req2Res(req Request) Response {
 }
 
 func EmptyResponse() []byte {
+	i := json.RawMessage(`-1`)
 	out, _ := json.Marshal(Response{
-		Id: -1,
+		Id: &i,
 		Result: Message{
 			Message: "",
 		},
@@ -78,45 +84,45 @@ func ValidateOut(in []byte) (error, []byte) {
 }
 
 //
-func DigestReq(wg *sync.WaitGroup) {
-	buffmut.Lock()
+// func DigestReq(wg *sync.WaitGroup) {
+// 	buffmut.Lock()
 
-	// read line by line
-	// validate each line
-	// if invalid sanitize it bring it to buffIn
+// 	// read line by line
+// 	// validate each line
+// 	// if invalid sanitize it bring it to buffIn
 
-	for {
-		l, err := buffer.ReadBytes(byte(10))
-		log.Println("DigestReq: processing item:", string(l))
-		if err == io.EOF {
-			buffer.Reset()
-			break
-		}
-		if (err != io.EOF) && (err != nil) {
-			log.Println("DigestReq: buffer readByte error:", err)
-		}
+// 	for {
+// 		l, err := buffer.ReadBytes(byte(10))
+// 		log.Println("DigestReq: processing item:", string(l))
+// 		if err == io.EOF {
+// 			buffer.Reset()
+// 			break
+// 		}
+// 		if (err != io.EOF) && (err != nil) {
+// 			log.Println("DigestReq: buffer readByte error:", err)
+// 		}
 
-		if json.Valid(l) {
-			err, v := ValidateOut(l)
-			if err != nil {
-				log.Println("DigestReq: ValidateOut error:", err)
-				go Sanitize(wg, l)
-			}
-			if len(v) != 0 {
-				buffOut <- v
-				// wg.Done()
-			}
-		} else {
-			go Sanitize(wg, l)
-		}
-	}
+// 		if json.Valid(l) {
+// 			err, v := ValidateOut(l)
+// 			if err != nil {
+// 				log.Println("DigestReq: ValidateOut error:", err)
+// 				go Sanitize(wg, l)
+// 			}
+// 			if len(v) != 0 {
+// 				buffOut <- v
+// 				// wg.Done()
+// 			}
+// 		} else {
+// 			go Sanitize(wg, l)
+// 		}
+// 	}
 
-	buffmut.Unlock()
-}
+// 	buffmut.Unlock()
+// }
 
 // Sanitize is new CrumbProc do in goroutine and return to buffer if fail
 // if success straight to buffOut
-func Sanitize(wg *sync.WaitGroup, in []byte) {
+func Sanitize(in []byte) (error, []byte) {
 	var bc, bcOi, bcCi int
 	// s := []byte("\n")
 
@@ -143,24 +149,10 @@ func Sanitize(wg *sync.WaitGroup, in []byte) {
 	}
 
 	if (bcOi < bcCi) && (len(in[bcOi:bcCi]) != 0) && (json.Valid(in[bcOi:bcCi])) {
-		err, v := ValidateOut(in[bcOi:bcCi])
-		if err != nil {
-			log.Println("Sanitize Validate err:", err)
-
-			buffmut.Lock()
-			n, err := buffer.Write(in[bcOi:bcCi])
-			buffmut.Unlock()
-
-			if err != nil {
-				log.Println("sanitize throwback err:", err)
-			}
-			log.Println("Sanitize throwback to buff:", n)
-			// wg.Done()
-		} else {
-			buffOut <- v
-			// wg.Done()
-		}
+		return nil, in[bcOi:bcCi]
 	}
+
+	return errors.New("Sanitize fail, JSON not found."), []byte("")
 }
 
 // CrumbProc this function will scan buffer for an object,

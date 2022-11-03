@@ -31,6 +31,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 
 	// "bytes"
 	"log"
@@ -52,67 +53,9 @@ var timer *time.Timer
 var ta time.Time
 var buffer *bytes.Buffer
 
-func collectingBuff(wg *sync.WaitGroup) {
-	// var lastBuff []byte
-
-	log.Println("collectingBuff goroutine start.")
-	for {
-		select {
-		case in := <-buffIn:
-			log.Println("collectingBuff: buffIn received.")
-
-			log.Println("buffIn string:", string(in))
-
-			buffmut.Lock()
-			// if len(in) != len(lastBuff) {
-
-			log.Println("collectingBuff: appending to buffer.")
-			t1 := time.Now()
-			bw, err := buffer.Write(in)
-			log.Println("Append duration:", time.Now().Sub(t1))
-
-			if err != nil {
-				log.Println("buffer write error", err)
-			}
-
-			log.Println("buffer bytes written", bw)
-			// lastBuff = in // FIXME: need benchmark
-
-			// } else {
-			// 	tt0 := time.Now()
-			// 	// eq := bytes.Compare(in, lastBuff)
-			// 	eq := strings.Compare(string(in), string(lastBuff))
-			// 	log.Println("compare duration:", time.Now().Sub(tt0))
-			// 	if eq != 0 {
-
-			// 		log.Println("collectingBuff: appending to buffer.")
-			// 		t1 := time.Now()
-			// 		bw, err := buffer.Write(in)
-			// 		log.Println("Append duration:", time.Now().Sub(t1))
-
-			// 		if err != nil {
-			// 			log.Println("buffer write error", err)
-			// 		}
-
-			// 		log.Println("buffer bytes written", bw)
-			// 		lastBuff = in // FIXME: need benchmark
-			// 	} else {
-			// 		log.Println("collectingBuff: Duplicate message found, ignore.")
-			// 	}
-			// }
-			buffmut.Unlock()
-
-			// log.Println("buffIn content predigest:", string(buffer))
-			// log.Println("buffIn content predigest:", buffer)
-
-			// sanitize, crop, validate
-			DigestReq(wg)
-
-			// log.Println("buffIn content postdigest:", string(buffer))
-			// log.Println("buffIn content postdigest:", buffer)
-		default:
-			continue
-		}
+func errLog(err error) {
+	if err != nil {
+		log.Println("error:", err)
 	}
 }
 
@@ -122,9 +65,6 @@ func collectingResult(wg *sync.WaitGroup) {
 		select {
 		case out := <-buffOut:
 			log.Println("collectingResult: buffOut received.")
-
-			// log.Println("buffOut string:", string(out))
-			// log.Println("buffOut bytes:", out)
 
 			// Make sure response are terminated by \n
 			// return only single line unformatted
@@ -146,27 +86,28 @@ func collectingResult(wg *sync.WaitGroup) {
 	}
 }
 
-func echoServer(wg *sync.WaitGroup, c net.Conn) {
-	log.Println("echoServer goroutine start.")
+func readLine(lb *bytes.Buffer, c net.Conn) {
+	// lb := bytes.NewBuffer(data.Bytes())
+
 	for {
-		// log.Println("echoServer: default select")
-		buf := make([]byte, 2048)
-		nr, err := c.Read(buf)
+		log.Println("echoServer: start readline")
+
+		d, err := lb.ReadBytes(10)
+		log.Println("echoServer: len(d)", len(d))
+		log.Println("echoServer: err", err)
+
 		if err != nil {
-			return
+			if (err == io.EOF) && (len(d) == 0) {
+				lb.Reset()
+				break
+			} else {
+				errLog(err)
+			}
 		}
+		log.Println("echoServer: process line:", string(d))
 
-		data := buf[0:nr]
-
-		ta = time.Now()
-		log.Println("<===", string(data)) // receive request here
-		log.Println("<===", data)         // receive request here
-		// if (len(data) == 1) && (data[0] == byte(10)) {
-		// 	log.Println("Only endline, ignore")
-		// 	continue
-		// }
-		if !json.Valid(data) {
-			log.Println("echoServer: invalid json, buffering.")
+		if !json.Valid(d) {
+			log.Println("echoServer: invalid json, buffering.", string(d))
 
 			// count request waiting
 			rwcmut.Lock()
@@ -174,8 +115,49 @@ func echoServer(wg *sync.WaitGroup, c net.Conn) {
 			rwcmut.Unlock()
 			log.Println("echoServer: resWaitCount", resWaitCount)
 
-			buffIn <- data
-			resOut <- c
+			buffmut.Lock()
+			nr, err := buffer.Write(d)
+			buffmut.Unlock()
+
+			errLog(err)
+			// log.Println("echoServer: buff bytes written:", nr)
+			// log.Println("echoServer: len buffer b", buffer.Len())
+			// log.Println("echoServer: written buffer", buffer.String())
+			// log.Println("echoServer: written buffer", buffer.Bytes())
+			// log.Println("echoServer: len buffer a", buffer.Len())
+
+			if bytes.Index(d, []byte("\n")) != -1 {
+				buffmut.Lock()
+				nb := bytes.NewBuffer(buffer.Bytes())
+				buffer.Reset()
+				buffmut.Unlock()
+
+				// log.Println("echoServer: len buffer b", buffer.Len())
+				// log.Println("echoServer: content buffer", buffer.String())
+				// log.Println("echoServer: content buffer", buffer.Bytes())
+				// log.Println("echoServer: len buffer a", buffer.Len())
+
+				err, r := Sanitize(nb.Bytes())
+				if err == nil {
+					_, res := ValidateOut(r)
+					log.Println("===>", string(res))
+					log.Println("===>", res)
+					_, err = c.Write(res) // send response here
+					log.Println("request duration:", time.Now().Sub(ta))
+
+					if err != nil {
+						log.Fatal("write error", err)
+					}
+					timer.Stop()
+				}
+				errLog(err)
+
+				// go readLine(nb, c)
+			}
+			continue
+
+			// buffIn <- data
+			// resOut <- c
 
 			// _, err = c.Write(EmptyResponse())
 			// if err != nil {
@@ -183,7 +165,7 @@ func echoServer(wg *sync.WaitGroup, c net.Conn) {
 			// }
 			// c.Close()
 		} else {
-			_, res := ValidateOut(data)
+			_, res := ValidateOut(d)
 			log.Println("===>", string(res))
 			log.Println("===>", res)
 			_, err = c.Write(res) // send response here
@@ -195,8 +177,40 @@ func echoServer(wg *sync.WaitGroup, c net.Conn) {
 			timer.Stop()
 			// wg.Done()
 		}
+
+		log.Println("echoServer: end readline")
+	}
+}
+
+func echoServer(c net.Conn) {
+	// var err error
+	log.Println("echoServer goroutine start.")
+	for {
+		// log.Println("echoServer: default select")
+		buf := make([]byte, 2048)
+		nr, err := c.Read(buf)
+		if err != nil {
+			return
+		}
+
+		lb := bytes.NewBuffer(buf[0:nr])
+		// log.Println("echoServer: buff", data.String())
+		// log.Println("echoServer: buff", data.Bytes())
+
+		ta = time.Now()
+		// log.Println("<===", data.String()) // receive request here
+		// log.Println("<===", data.Bytes())  // receive request here
+		// if (len(data) == 1) && (data[0] == byte(10)) {
+		// 	log.Println("Only endline, ignore")
+		// 	continue
+		// }
+		// if (len(data.Bytes()) == 1) && (data.Bytes()[0] == byte(10)) {
+		// 	continue
+		// }
+		readLine(lb, c)
 	}
 
+	log.Println("echoServer goroutine end.")
 }
 
 func timerf() {
@@ -205,29 +219,29 @@ func timerf() {
 		case <-timer.C:
 			log.Println("Timeout.")
 			log.Println("all duration:", time.Now().Sub(ta))
-			os.Exit(2)
+			// os.Exit(2)
 		}
 	}
 }
 
 func main() {
 	l, err := net.Listen("unix", os.Args[1])
-	var wg sync.WaitGroup
+	// var wg sync.WaitGroup
+	buffer = bytes.NewBuffer([]byte(""))
+	buffer.Grow(5242880) // 5MB 1024×1024×5
 
-	buffer = bytes.NewBuffer([]byte{})
-	// buffer.Grow(5242880) // 5MB 1024×1024×5.
 	if err != nil {
 		log.Fatal("net listen error", err)
 	}
 
-	go collectingBuff(&wg)
-	go collectingResult(&wg)
+	// go collectingBuff(&wg)
+	// go collectingResult(&wg)
 
 	for {
 		log.Println("accept in.")
 		fd, err := l.Accept()
 
-		timer = time.NewTimer(2 * time.Second)
+		timer = time.NewTimer(5 * time.Second)
 		go timerf()
 
 		if err != nil {
@@ -235,7 +249,7 @@ func main() {
 		}
 
 		// wg.Add(1)
-		go echoServer(&wg, fd)
+		go echoServer(fd)
 		// wg.Wait()
 	}
 
