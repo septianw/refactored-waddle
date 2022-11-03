@@ -1,5 +1,11 @@
 package main
 
+import (
+	"bytes"
+	"net"
+	"sync"
+)
+
 type Message struct {
 	Message string `json:"message"`
 }
@@ -15,4 +21,10 @@ type Request struct {
 type Response struct {
 	Id     int     `json:"id"`
 	Result Message `json:"result"`
+}
+
+type Particle struct {
+	Buff *bytes.Buffer
+	Conn *net.Conn
+	Wg   *sync.WaitGroup
 }

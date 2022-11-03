@@ -3,19 +3,28 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"log"
+	"sync"
 )
 
 // Ab Append buff
 // Ab(base,
 func Ab(base, in []byte) []byte {
-	out := make([]byte, 0, len(base)+len(in)) // len 0, cap sum of base and in
-	out = base
+	out := make([]byte, len(base)+len(in)) // len 0, cap sum of base and in
+
+	log.Println("Ab outsize:", len(base)+len(in))
+	cpid := copy(out, base)
+	log.Println("Ab len copied from base to out:", cpid)
+
+	i := len(base)
+
 	// for _, v := range base {
 	// 	out = append(out, v)
 	// }
 	for _, v := range in {
-		out = append(out, v)
+		out[i] = v
+		i++
 	}
 
 	return out
@@ -23,12 +32,10 @@ func Ab(base, in []byte) []byte {
 
 // Req2Res are converting from request to response
 func Req2Res(req Request) Response {
-	var res Response
-
-	res.Id = req.Id
-	res.Result = req.Params
-
-	return res
+	return Response{
+		Id:     req.Id,
+		Result: req.Params,
+	}
 }
 
 func EmptyResponse() []byte {
@@ -58,7 +65,7 @@ func ValidateOut(in []byte) (error, []byte) {
 	if err != nil {
 		return err, out
 	}
-	log.Println(req)
+	log.Println("ValidateOut request:", req)
 
 	res = Req2Res(req)
 
@@ -71,29 +78,89 @@ func ValidateOut(in []byte) (error, []byte) {
 }
 
 //
-func DigestReq(buff []byte) []byte {
-	s := []byte("\n") // buffer out and separator
+func DigestReq(wg *sync.WaitGroup) {
+	buffmut.Lock()
 
-	idx := bytes.Index(buff, s)
-	if idx != -1 {
-		bs := bytes.Split(buff, s)
+	// read line by line
+	// validate each line
+	// if invalid sanitize it bring it to buffIn
 
-		for _, v := range bs {
-			err, v := ValidateOut(v)
+	for {
+		l, err := buffer.ReadBytes(byte(10))
+		log.Println("DigestReq: processing item:", string(l))
+		if err == io.EOF {
+			buffer.Reset()
+			break
+		}
+		if (err != io.EOF) && (err != nil) {
+			log.Println("DigestReq: buffer readByte error:", err)
+		}
+
+		if json.Valid(l) {
+			err, v := ValidateOut(l)
 			if err != nil {
-				rwcmut.Lock()
-				crumb = Ab(crumb, v)
-				rwcmut.Unlock()
-				go CrumbProc()
+				log.Println("DigestReq: ValidateOut error:", err)
+				go Sanitize(wg, l)
 			}
 			if len(v) != 0 {
 				buffOut <- v
+				// wg.Done()
 			}
+		} else {
+			go Sanitize(wg, l)
 		}
-		return []byte("")
 	}
 
-	return buff
+	buffmut.Unlock()
+}
+
+// Sanitize is new CrumbProc do in goroutine and return to buffer if fail
+// if success straight to buffOut
+func Sanitize(wg *sync.WaitGroup, in []byte) {
+	var bc, bcOi, bcCi int
+	// s := []byte("\n")
+
+	for i, v := range in {
+		if v == byte(123) { // {
+			// if not the first one and prefiously no space. reset to 0
+			if (i > 0) && (in[i-1] != byte(32)) {
+				bc = 0
+			}
+			if bc == 0 { // if previously 0 this is first opening
+				log.Printf("Sanitize bracket open found at %d containing %s", i, string(in[i]))
+				bcOi = i
+			}
+			bc++
+		}
+		if v == byte(125) { // }
+			bc--
+		}
+		if bc == 0 { // if this become 0 this is last closing
+			log.Printf("Sanitize bracket close found at %d containing %s", i, string(in[i]))
+			bcCi = i + 1
+			break
+		}
+	}
+
+	if (bcOi < bcCi) && (len(in[bcOi:bcCi]) != 0) && (json.Valid(in[bcOi:bcCi])) {
+		err, v := ValidateOut(in[bcOi:bcCi])
+		if err != nil {
+			log.Println("Sanitize Validate err:", err)
+
+			buffmut.Lock()
+			n, err := buffer.Write(in[bcOi:bcCi])
+			buffmut.Unlock()
+
+			if err != nil {
+				log.Println("sanitize throwback err:", err)
+			}
+			log.Println("Sanitize throwback to buff:", n)
+			// wg.Done()
+		} else {
+			buffOut <- v
+			// wg.Done()
+		}
+	}
 }
 
 // CrumbProc this function will scan buffer for an object,

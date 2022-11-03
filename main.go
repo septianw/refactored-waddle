@@ -29,12 +29,15 @@ For this problem, implement only the request type: echo. For this message type, 
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+
 	// "bytes"
 	"log"
 	"net"
 	"os"
 
-	"strings"
+	// "strings"
 	"sync"
 	"time"
 )
@@ -43,14 +46,15 @@ var buffOut = make(chan []byte, 100)
 var buffIn = make(chan []byte, 100)
 var resOut = make(chan net.Conn, 100)
 var resWaitCount int = 0
-var rwcmut sync.Mutex
+var rwcmut, buffmut sync.Mutex
 var crumb []byte
 var timer *time.Timer
 var ta time.Time
+var buffer *bytes.Buffer
 
-func collectingBuff() {
-	var buffer, lastBuff []byte
-	buffer = make([]byte, 0, 5242880) // 5MB 1024*1024*5
+func collectingBuff(wg *sync.WaitGroup) {
+	// var lastBuff []byte
+
 	log.Println("collectingBuff goroutine start.")
 	for {
 		select {
@@ -58,35 +62,51 @@ func collectingBuff() {
 			log.Println("collectingBuff: buffIn received.")
 
 			log.Println("buffIn string:", string(in))
-			// log.Println("buffIn bytes:", in)
 
-			if len(in) != len(lastBuff) {
-				log.Println("collectingBuff: appending to buffer.")
-				t1 := time.Now()
-				buffer = Ab(buffer, in)
-				log.Println("Append duration:", time.Now().Sub(t1))
-				lastBuff = in
-			} else {
-				tt0 := time.Now()
-				// eq := bytes.Compare(in, lastBuff)
-				eq := strings.Compare(string(in), string(lastBuff))
-				log.Println("compare duration:", time.Now().Sub(tt0))
-				if eq != 0 {
-					log.Println("collectingBuff: appending to buffer.")
-					t1 := time.Now()
-					buffer = Ab(buffer, in)
-					log.Println("Append duration:", time.Now().Sub(t1))
-					lastBuff = in
-				} else {
-					log.Println("collectingBuff: Duplicate message found, ignore.")
-				}
+			buffmut.Lock()
+			// if len(in) != len(lastBuff) {
+
+			log.Println("collectingBuff: appending to buffer.")
+			t1 := time.Now()
+			bw, err := buffer.Write(in)
+			log.Println("Append duration:", time.Now().Sub(t1))
+
+			if err != nil {
+				log.Println("buffer write error", err)
 			}
+
+			log.Println("buffer bytes written", bw)
+			// lastBuff = in // FIXME: need benchmark
+
+			// } else {
+			// 	tt0 := time.Now()
+			// 	// eq := bytes.Compare(in, lastBuff)
+			// 	eq := strings.Compare(string(in), string(lastBuff))
+			// 	log.Println("compare duration:", time.Now().Sub(tt0))
+			// 	if eq != 0 {
+
+			// 		log.Println("collectingBuff: appending to buffer.")
+			// 		t1 := time.Now()
+			// 		bw, err := buffer.Write(in)
+			// 		log.Println("Append duration:", time.Now().Sub(t1))
+
+			// 		if err != nil {
+			// 			log.Println("buffer write error", err)
+			// 		}
+
+			// 		log.Println("buffer bytes written", bw)
+			// 		lastBuff = in // FIXME: need benchmark
+			// 	} else {
+			// 		log.Println("collectingBuff: Duplicate message found, ignore.")
+			// 	}
+			// }
+			buffmut.Unlock()
 
 			// log.Println("buffIn content predigest:", string(buffer))
 			// log.Println("buffIn content predigest:", buffer)
 
 			// sanitize, crop, validate
-			buffer = DigestReq(buffer)
+			DigestReq(wg)
 
 			// log.Println("buffIn content postdigest:", string(buffer))
 			// log.Println("buffIn content postdigest:", buffer)
@@ -96,7 +116,7 @@ func collectingBuff() {
 	}
 }
 
-func collectingResult() {
+func collectingResult(wg *sync.WaitGroup) {
 	log.Println("collectingResult goroutine start.")
 	for {
 		select {
@@ -109,6 +129,8 @@ func collectingResult() {
 			// Make sure response are terminated by \n
 			// return only single line unformatted
 			log.Println("===>", string(out))
+			log.Println("===>", out)
+
 			c := <-resOut
 			_, err := c.Write(out) // send response
 			log.Println("request duration:", time.Now().Sub(ta))
@@ -116,6 +138,7 @@ func collectingResult() {
 				log.Fatal("collectingResult: write error", err)
 			}
 			timer.Stop()
+			// wg.Done()
 		default:
 			continue
 		}
@@ -123,11 +146,11 @@ func collectingResult() {
 	}
 }
 
-func echoServer(c net.Conn) {
+func echoServer(wg *sync.WaitGroup, c net.Conn) {
 	log.Println("echoServer goroutine start.")
 	for {
 		// log.Println("echoServer: default select")
-		buf := make([]byte, 512)
+		buf := make([]byte, 2048)
 		nr, err := c.Read(buf)
 		if err != nil {
 			return
@@ -137,12 +160,12 @@ func echoServer(c net.Conn) {
 
 		ta = time.Now()
 		log.Println("<===", string(data)) // receive request here
-		if (len(data) == 1) && (data[0] == byte(10)) {
-			log.Println("Only endline, ignore")
-			continue
-		}
-		err, res := ValidateOut(data)
-		if err != nil {
+		log.Println("<===", data)         // receive request here
+		// if (len(data) == 1) && (data[0] == byte(10)) {
+		// 	log.Println("Only endline, ignore")
+		// 	continue
+		// }
+		if !json.Valid(data) {
 			log.Println("echoServer: invalid json, buffering.")
 
 			// count request waiting
@@ -160,7 +183,9 @@ func echoServer(c net.Conn) {
 			// }
 			// c.Close()
 		} else {
+			_, res := ValidateOut(data)
 			log.Println("===>", string(res))
+			log.Println("===>", res)
 			_, err = c.Write(res) // send response here
 			log.Println("request duration:", time.Now().Sub(ta))
 
@@ -168,6 +193,7 @@ func echoServer(c net.Conn) {
 				log.Fatal("write error", err)
 			}
 			timer.Stop()
+			// wg.Done()
 		}
 	}
 
@@ -179,22 +205,28 @@ func timerf() {
 		case <-timer.C:
 			log.Println("Timeout.")
 			log.Println("all duration:", time.Now().Sub(ta))
-			// os.Exit(2)
+			os.Exit(2)
 		}
 	}
 }
 
 func main() {
 	l, err := net.Listen("unix", os.Args[1])
+	var wg sync.WaitGroup
+
+	buffer = bytes.NewBuffer([]byte{})
+	// buffer.Grow(5242880) // 5MB 1024×1024×5.
 	if err != nil {
 		log.Fatal("net listen error", err)
 	}
 
-	go collectingBuff()
-	go collectingResult()
+	go collectingBuff(&wg)
+	go collectingResult(&wg)
 
 	for {
+		log.Println("accept in.")
 		fd, err := l.Accept()
+
 		timer = time.NewTimer(2 * time.Second)
 		go timerf()
 
@@ -202,6 +234,9 @@ func main() {
 			log.Fatal("net listen accept error", err)
 		}
 
-		go echoServer(fd)
+		// wg.Add(1)
+		go echoServer(&wg, fd)
+		// wg.Wait()
 	}
+
 }

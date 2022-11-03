@@ -67,17 +67,17 @@ func TestValidateOut(t *testing.T) {
 }
 
 func TestDigestReq(t *testing.T) {
-	var input [][]byte
-	input = append(input, []byte(`{"id": 0, "method": "echo",{"id": 0, "method": "echo","params": {"message": "Hello"}}`))
-	input = append(input, []byte(`{"id": 0, "method": "echo",
-"params": {"message": "Hello"
-}}`))
+	// var input [][]byte
+	// input = append(input, []byte(`{"id": 0, "method": "echo",{"id": 0, "method": "echo","params": {"message": "Hello"}}`))
+	// input = append(input, []byte(`{"id": 0, "method": "echo",
+	// "params": {"message": "Hello"
+	// }}`))
 
-	for i, v := range input {
-		t.Log("input", string(v))
-		o := DigestReq(v)
-		t.Log("index", i, "output", string(o))
-	}
+	// for i, v := range input {
+	// t.Log("input", string(v))
+	// DigestReq()
+	// t.Log("index", i, "output", string(o))
+	// }
 
 	// t.Log([]byte("\n"))
 }
